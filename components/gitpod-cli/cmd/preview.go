@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -23,22 +24,40 @@ var regexLocalhost = regexp.MustCompile(`((^(localhost|127\.0\.0\.1))|(https?://
 
 var previewCmdOpts struct {
 	External bool
+	Port     int
 }
 
 // previewCmd represents the preview command
 var previewCmd = &cobra.Command{
 	Use:   "preview <url>",
 	Short: "Opens a URL in the IDE's preview",
-	Args:  cobra.ExactArgs(1),
+	Long: `Opens a URL in the IDE's preview.
+If <url> is not provided but --port is provided, it will try to get defaultURL based on $(gp url <port>) comman.
+
+for example:
+	
+	$ gp preview --port 3000 --external
+
+This will be equivalent with
+	
+	$ gp preview $(gp url 3000) --external`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// TODO(ak) use NotificationService.NotifyActive supervisor API instead
+
+		defaultURL := getDefaultURL(cmd, args)
+		if defaultURL == "" {
+			fmt.Println("Error: accepts 1 arg(s), received 0")
+			cmd.Help()
+			os.Exit(1)
+			return
+		}
 
 		ctx := context.Background()
 		err := supervisorClient.WaitForIDEReady(ctx)
 		if err != nil {
 			log.Fatal(err)
 		}
-		url := replaceLocalhostInURL(args[0])
+		url := replaceLocalhostInURL(defaultURL)
 		if previewCmdOpts.External {
 			if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 				url = "https://" + url
@@ -48,6 +67,18 @@ var previewCmd = &cobra.Command{
 		}
 		openPreview("GP_PREVIEW_BROWSER", url)
 	},
+}
+
+func getDefaultURL(cmd *cobra.Command, args []string) string {
+	if len(args) == 1 {
+		return args[0]
+	}
+
+	if previewCmdOpts.Port == 0 {
+		return ""
+	}
+
+	return GetWorkspaceURL(previewCmdOpts.Port)
 }
 
 func openPreview(gpBrowserEnvVar string, url string) {
@@ -97,4 +128,5 @@ func replaceLocalhostInURL(url string) string {
 func init() {
 	rootCmd.AddCommand(previewCmd)
 	previewCmd.Flags().BoolVar(&previewCmdOpts.External, "external", false, "open the URL in a new browser tab")
+	previewCmd.Flags().IntVar(&previewCmdOpts.Port, "port", 0, "URL port to be open in a new browser tab")
 }
